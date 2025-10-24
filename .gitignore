@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+
+# Environnements virtuels
+.venv/
+venv/
+ENV/
+
+# Env & secrets
+.env
+.env.*
+*.sqlite3
+
+# Uploads (générés au runtime)
+uploads/
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Tests/coverage
+pytest_cache/
+.coverage
