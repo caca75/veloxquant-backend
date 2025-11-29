@@ -2,7 +2,7 @@
 
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException,
-    UploadFile, File, Form
+    UploadFile, File, Form, Request
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -620,43 +620,165 @@ def admin_users(_: User = Depends(get_admin_user), db: Session = Depends(get_db)
         })
     return out
 
-@api.post("/admin/users/add-funds")
-def admin_add_funds(
-    user_identifier: str = Form(...),  # email OU id
-    amount: float = Form(...),
-    admin: User = Depends(get_admin_user),
+# ============================================================
+# ADMIN : AJOUT DE FONDS
+# ============================================================
+
+@admin_router.post("/users/add-funds")
+async def admin_add_funds(
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Montant invalide")
-    u = db.query(User).filter(or_(User.email == user_identifier, User.id == user_identifier)).first()
-    if not u:
+    """
+    Ajoute des fonds au solde de l'utilisateur (balance).
+    Accepte soit JSON, soit formulaire.
+    """
+
+    # 1) Récupérer les données (JSON ou formulaire)
+    data = {}
+
+    # Essayer JSON
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    # Si JSON vide, on tente en formulaire
+    if not data:
+        try:
+            form = await request.form()
+            data = dict(form)
+        except Exception:
+            data = {}
+
+    user_identifier = data.get("user_identifier")
+    amount_raw = data.get("amount")
+
+    if not user_identifier or amount_raw is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Les champs 'user_identifier' et 'amount' sont requis."
+        )
+
+    # Convertir en float
+    try:
+        amount = float(amount_raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="'amount' doit être un nombre."
+        )
+
+    # 2) Trouver l'utilisateur (email ou id)
+    user = (
+        db.query(User)
+        .filter(
+            or_(
+                User.email == user_identifier,
+                User.id == user_identifier,
+            )
+        )
+        .first()
+    )
+
+    if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
-    u.balance = float(u.balance or 0.0) + float(amount)
+    if user.balance is None:
+        user.balance = 0.0
+
+    user.balance += amount
+
+    db.add(user)
     db.commit()
-    db.refresh(u)  # <<< garantit que la valeur renvoyée est mise à jour
+    db.refresh(user)
 
-    log.info(f"[ADMIN] {admin.email} +{amount}$ au solde de {u.email} => {u.balance}")
-    return {"ok": True, "user_email": u.email, "amount_added": amount, "new_balance": float(u.balance or 0.0)}
+    return {
+        "message": "Fonds ajoutés avec succès",
+        "user_id": user.id,
+        "email": user.email,
+        "balance": user.balance,
+    }
 
-@api.post("/admin/users/add-profit")
-def admin_add_profit(
-    user_identifier: str = Form(...),  # email OU id
-    amount: float = Form(...),         # positif ou négatif
-    admin: User = Depends(get_admin_user),
+
+# ============================================================
+# ADMIN : AJOUT DE PROFIT
+# ============================================================
+
+@admin_router.post("/users/add-profit")
+async def admin_add_profit(
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    u = db.query(User).filter(or_(User.email == user_identifier, User.id == user_identifier)).first()
-    if not u:
+    """
+    Ajoute un profit au profit_total de l'utilisateur.
+    Accepte JSON ou formulaire.
+    """
+
+    data = {}
+
+    # Essayer JSON
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    # Sinon formulaire
+    if not data:
+        try:
+            form = await request.form()
+            data = dict(form)
+        except Exception:
+            data = {}
+
+    user_identifier = data.get("user_identifier")
+    profit_raw = data.get("profit")
+
+    if not user_identifier or profit_raw is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Les champs 'user_identifier' et 'profit' sont requis."
+        )
+
+    try:
+        profit = float(profit_raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="'profit' doit être un nombre."
+        )
+
+    user = (
+        db.query(User)
+        .filter(
+            or_(
+                User.email == user_identifier,
+                User.id == user_identifier,
+            )
+        )
+        .first()
+    )
+
+    if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
-    u.profit_total = float(u.profit_total or 0.0) + float(amount)
-    db.commit()
-    db.refresh(u)  # <<< idem
+    if user.profit_total is None:
+        user.profit_total = 0.0
 
-    log.info(f"[ADMIN] {admin.email} profit_total {amount:+} pour {u.email} => {u.profit_total}")
-    return {"ok": True, "user_email": u.email, "delta_profit": amount, "profit_total": float(u.profit_total or 0.0)}
+    user.profit_total += profit
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "message": "Profit ajouté avec succès",
+        "user_id": user.id,
+        "email": user.email,
+        "profit_total": user.profit_total,
+    }
 
 @api.get("/admin/manual-payments")
 def admin_list_payments(
