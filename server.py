@@ -1,8 +1,7 @@
 # server.py — VeloxQuant (FastAPI + MySQL / SQLAlchemy)
-
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException,
-    UploadFile, File, Form, Request
+    UploadFile, File, Form, Body   # 👈 ajoute Body ici
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -620,74 +619,58 @@ def admin_users(_: User = Depends(get_admin_user), db: Session = Depends(get_db)
         })
     return out
 
-# ============================================================
-# ADMIN : AJOUT DE FONDS
-# ============================================================
-
+# ---------------------------------------------------------
+#  ADMIN : AJOUT DE FONDS
+# ---------------------------------------------------------
 @admin_router.post("/users/add-funds")
-async def admin_add_funds(
-    request: Request,
-    current_admin: User = Depends(get_current_admin),
+def admin_add_funds(
+    payload: dict = Body(...),
     db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
 ):
     """
-    Ajoute des fonds au solde de l'utilisateur (balance).
-    Accepte soit JSON, soit formulaire.
+    Ajouter des fonds au solde d'un utilisateur
+    payload = { "user_identifier": "<email ou id>", "amount": 300 }
     """
+    user_identifier = payload.get("user_identifier")
+    amount = payload.get("amount")
 
-    # 1) Récupérer les données (JSON ou formulaire)
-    data = {}
-
-    # Essayer JSON
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    # Si JSON vide, on tente en formulaire
-    if not data:
-        try:
-            form = await request.form()
-            data = dict(form)
-        except Exception:
-            data = {}
-
-    user_identifier = data.get("user_identifier")
-    amount_raw = data.get("amount")
-
-    if not user_identifier or amount_raw is None:
+    if not user_identifier or amount is None:
         raise HTTPException(
             status_code=400,
-            detail="Les champs 'user_identifier' et 'amount' sont requis."
+            detail="Les champs 'user_identifier' et 'amount' sont obligatoires.",
         )
 
-    # Convertir en float
     try:
-        amount = float(amount_raw)
-    except ValueError:
+        amount = float(amount)
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=400,
-            detail="'amount' doit être un nombre."
+            detail="'amount' doit être un nombre.",
         )
 
-    # 2) Trouver l'utilisateur (email ou id)
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="'amount' doit être supérieur à 0.",
+        )
+
+    # Chercher l'utilisateur par email OU par id
     user = (
         db.query(User)
-        .filter(
-            or_(
-                User.email == user_identifier,
-                User.id == user_identifier,
-            )
-        )
+        .filter(or_(User.email == user_identifier, User.id == user_identifier))
         .first()
     )
 
     if not user:
-        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+        raise HTTPException(
+            status_code=404,
+            detail="Utilisateur introuvable.",
+        )
 
+    # Mettre à jour le solde
     if user.balance is None:
         user.balance = 0.0
-
     user.balance += amount
 
     db.add(user)
@@ -695,120 +678,83 @@ async def admin_add_funds(
     db.refresh(user)
 
     return {
-        "message": "Fonds ajoutés avec succès",
+        "message": "Fonds ajoutés avec succès.",
         "user_id": user.id,
         "email": user.email,
         "balance": user.balance,
     }
 
 
-# ============================================================
-# ADMIN : AJOUT DE PROFIT
-# ============================================================
-
+# ---------------------------------------------------------
+#  ADMIN : AJOUT DE PROFIT
+# ---------------------------------------------------------
 @admin_router.post("/users/add-profit")
-async def admin_add_profit(
-    request: Request,
-    current_admin: User = Depends(get_current_admin),
+def admin_add_profit(
+    payload: dict = Body(...),
     db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
 ):
     """
-    Ajoute un profit au profit_total de l'utilisateur.
-    Accepte JSON ou formulaire.
+    Ajouter du profit à un utilisateur
+    payload = { "user_identifier": "<email ou id>", "profit": 100 }
     """
+    user_identifier = payload.get("user_identifier")
+    profit = payload.get("profit")
 
-    data = {}
-
-    # Essayer JSON
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    # Sinon formulaire
-    if not data:
-        try:
-            form = await request.form()
-            data = dict(form)
-        except Exception:
-            data = {}
-
-    user_identifier = data.get("user_identifier")
-    profit_raw = data.get("profit")
-
-    if not user_identifier or profit_raw is None:
+    if not user_identifier or profit is None:
         raise HTTPException(
             status_code=400,
-            detail="Les champs 'user_identifier' et 'profit' sont requis."
+            detail="Les champs 'user_identifier' et 'profit' sont obligatoires.",
         )
 
     try:
-        profit = float(profit_raw)
-    except ValueError:
+        profit = float(profit)
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=400,
-            detail="'profit' doit être un nombre."
+            detail="'profit' doit être un nombre.",
         )
 
+    if profit <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="'profit' doit être supérieur à 0.",
+        )
+
+    # Chercher l'utilisateur par email OU par id
     user = (
         db.query(User)
-        .filter(
-            or_(
-                User.email == user_identifier,
-                User.id == user_identifier,
-            )
-        )
+        .filter(or_(User.email == user_identifier, User.id == user_identifier))
         .first()
     )
 
     if not user:
-        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+        raise HTTPException(
+            status_code=404,
+            detail="Utilisateur introuvable.",
+        )
 
+    # Mettre à jour le profit_total
     if user.profit_total is None:
         user.profit_total = 0.0
-
     user.profit_total += profit
+
+    # (optionnel) On peut aussi créditer le solde avec ce profit
+    if user.balance is None:
+        user.balance = 0.0
+    user.balance += profit
 
     db.add(user)
     db.commit()
     db.refresh(user)
 
     return {
-        "message": "Profit ajouté avec succès",
+        "message": "Profit ajouté avec succès.",
         "user_id": user.id,
         "email": user.email,
+        "balance": user.balance,
         "profit_total": user.profit_total,
     }
-
-@api.get("/admin/manual-payments")
-def admin_list_payments(
-    status_filter: Optional[str] = None,
-    _: User = Depends(get_admin_user),
-    db: Session = Depends(get_db),
-):
-    q = db.query(ManualPayment)
-    if status_filter:
-        q = q.filter(ManualPayment.status == status_filter.upper())
-    rows = q.order_by(ManualPayment.created_at.desc()).all()
-
-    def to_dict(p: ManualPayment):
-        user = db.get(User, p.user_id)
-        plan = db.get(Plan, p.plan_id)
-        return {
-            "id": p.id,
-            "user_email": user.email if user else "Unknown",
-            "plan_name": plan.name if plan else "Unknown",
-            "currency": p.currency,
-            "address": p.address,
-            "amount_usd": p.amount_usd,
-            "tx_hash": p.tx_hash,
-            "screenshot_url": p.screenshot_url,
-            "status": p.status,
-            "rejection_reason": p.rejection_reason,
-            "reviewed_by": p.reviewed_by,
-            "created_at": p.created_at,
-        }
-    return [to_dict(r) for r in rows]
 
 @api.post("/admin/manual-payments/{payment_id}/approve")
 def admin_approve_payment(
