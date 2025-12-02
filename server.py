@@ -1,7 +1,7 @@
 # server.py — VeloxQuant (FastAPI + MySQL / SQLAlchemy)
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException,
-    UploadFile, File, Form, Body   # 👈 ajoute Body ici
+    UploadFile, File, Form, Body
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +43,13 @@ JWT_SECRET = os.getenv("JWT_SECRET", "change-me-please")
 JWT_ALG = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "4320"))  # 3 jours
 
-CORS_ORIGINS = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o]
+# CORS : on inclut directement les domaines de prod par défaut
+DEFAULT_CORS = "http://localhost:3000,https://veloxquant.com,https://www.veloxquant.com,https://api.veloxquant.com"
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", DEFAULT_CORS).split(",")
+    if o.strip()
+]
 
 PAY_ADDR_BTC = os.getenv("PAY_ADDR_BTC", "")
 PAY_ADDR_TRX = os.getenv("PAY_ADDR_TRX", "")
@@ -74,6 +80,7 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
 
+
 def get_db():
     db: Session = SessionLocal()
     try:
@@ -88,11 +95,14 @@ def get_db():
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer()
 
+
 def hash_password(p: str) -> str:
     return pwd_context.hash(p)
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
+
 
 def create_access_token(payload: dict) -> str:
     to_encode = payload.copy()
@@ -196,22 +206,27 @@ class UserOut(BaseModel):
     has_first_payment: bool
     created_at: datetime
 
+
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+
 
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str
     referral_code: Optional[str] = None
 
+
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
 
+
 class CycleCreateIn(BaseModel):
     initial_balance: float = 1000.0
+
 
 class WithdrawalCreateIn(BaseModel):
     amount: float
@@ -243,10 +258,12 @@ app.add_middleware(
 def issue_token_for_user(u: User) -> str:
     return create_access_token({"sub": u.id, "email": u.email, "role": u.role})
 
+
 def _ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
     if not dt:
         return dt
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
 
 def _user_to_out(u: User) -> UserOut:
     return UserOut(
@@ -260,6 +277,7 @@ def _user_to_out(u: User) -> UserOut:
         has_first_payment=bool(u.has_first_payment),
         created_at=_ensure_utc(u.created_at),
     )
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -276,6 +294,7 @@ async def get_current_user(
         return u
     except JWTError:
         raise HTTPException(status_code=401, detail="Token invalide")
+
 
 async def get_admin_user(u: User = Depends(get_current_user)) -> User:
     if u.role != "admin":
@@ -308,6 +327,7 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)):
     token = issue_token_for_user(user)
     return TokenOut(access_token=token, user=_user_to_out(user))
 
+
 @api.post("/auth/login", response_model=TokenOut)
 def login(payload: LoginIn, db: Session = Depends(get_db)):
     u = db.query(User).filter(User.email == payload.email).first()
@@ -315,6 +335,7 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
     token = issue_token_for_user(u)
     return TokenOut(access_token=token, user=_user_to_out(u))
+
 
 @api.get("/auth/me", response_model=UserOut)
 def me(u: User = Depends(get_current_user)):
@@ -398,6 +419,7 @@ def submit_manual_payment(
     db.commit()
     return {"ok": True, "id": pay.id, "message": "Paiement soumis pour vérification"}
 
+
 @api.get("/billing/my-payments")
 def my_payments(u: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = (
@@ -406,6 +428,7 @@ def my_payments(u: User = Depends(get_current_user), db: Session = Depends(get_d
         .order_by(ManualPayment.created_at.desc())
         .all()
     )
+
     def row_to_dict(x: ManualPayment):
         return {
             "id": x.id,
@@ -420,6 +443,7 @@ def my_payments(u: User = Depends(get_current_user), db: Session = Depends(get_d
             "reviewed_by": x.reviewed_by,
             "created_at": x.created_at,
         }
+
     return [row_to_dict(r) for r in rows]
 
 
@@ -514,6 +538,7 @@ def start_cycle(payload: CycleCreateIn, u: User = Depends(get_current_user), db:
         }
     }
 
+
 @api.get("/cycles/my-cycles")
 def my_cycles(u: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = (
@@ -522,6 +547,7 @@ def my_cycles(u: User = Depends(get_current_user), db: Session = Depends(get_db)
         .order_by(Cycle.start_time.desc())
         .all()
     )
+
     def to_dict(c: Cycle):
         return {
             "id": c.id,
@@ -532,7 +558,9 @@ def my_cycles(u: User = Depends(get_current_user), db: Session = Depends(get_db)
             "profit": c.profit,
             "status": c.status,
         }
+
     return [to_dict(r) for r in rows]
+
 
 @api.post("/cycles/{cycle_id}/complete")
 def complete_cycle(cycle_id: str, u: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -576,6 +604,7 @@ def request_withdrawal(payload: WithdrawalCreateIn, u: User = Depends(get_curren
     db.commit()
     return {"ok": True, "withdrawal_id": w.id}
 
+
 @api.get("/withdrawals/my-requests")
 def my_withdrawals(u: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = (
@@ -584,6 +613,7 @@ def my_withdrawals(u: User = Depends(get_current_user), db: Session = Depends(ge
         .order_by(Withdrawal.created_at.desc())
         .all()
     )
+
     def to_dict(w: Withdrawal):
         return {
             "id": w.id,
@@ -594,6 +624,7 @@ def my_withdrawals(u: User = Depends(get_current_user), db: Session = Depends(ge
             "rejection_reason": w.rejection_reason,
             "created_at": w.created_at,
         }
+
     return [to_dict(r) for r in rows]
 
 
@@ -603,7 +634,6 @@ def my_withdrawals(u: User = Depends(get_current_user), db: Session = Depends(ge
 @api.get("/admin/users")
 def admin_users(_: User = Depends(get_admin_user), db: Session = Depends(get_db)):
     rows = db.query(User).order_by(User.created_at.desc()).all()
-    # On renvoie un dict explicite (compat Pydantic v1/v2) AVEC balance/profit_total
     out = []
     for r in rows:
         out.append({
@@ -619,26 +649,32 @@ def admin_users(_: User = Depends(get_admin_user), db: Session = Depends(get_db)
         })
     return out
 
-# ---------------------------------------------------------
+
+# ---------------------------------------------------------#
 #  ADMIN : AJOUT DE FONDS
-# ---------------------------------------------------------
-@admin_router.post("/users/add-funds")
+# ---------------------------------------------------------#
+@api.post("/admin/users/add-funds")
 def admin_add_funds(
     payload: dict = Body(...),
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = Depends(get_admin_user),
 ):
     """
     Ajouter des fonds au solde d'un utilisateur
     payload = { "user_identifier": "<email ou id>", "amount": 300 }
     """
-    user_identifier = payload.get("user_identifier")
+    user_identifier = (
+        payload.get("user_identifier")
+        or payload.get("identifier")
+        or payload.get("email")
+        or payload.get("user")
+    )
     amount = payload.get("amount")
 
     if not user_identifier or amount is None:
         raise HTTPException(
             status_code=400,
-            detail="Les champs 'user_identifier' et 'amount' sont obligatoires.",
+            detail="Les champs 'user_identifier' (ou 'email') et 'amount' sont obligatoires.",
         )
 
     try:
@@ -685,26 +721,31 @@ def admin_add_funds(
     }
 
 
-# ---------------------------------------------------------
+# ---------------------------------------------------------#
 #  ADMIN : AJOUT DE PROFIT
-# ---------------------------------------------------------
-@admin_router.post("/users/add-profit")
+# ---------------------------------------------------------#
+@api.post("/admin/users/add-profit")
 def admin_add_profit(
     payload: dict = Body(...),
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = Depends(get_admin_user),
 ):
     """
     Ajouter du profit à un utilisateur
     payload = { "user_identifier": "<email ou id>", "profit": 100 }
     """
-    user_identifier = payload.get("user_identifier")
-    profit = payload.get("profit")
+    user_identifier = (
+        payload.get("user_identifier")
+        or payload.get("identifier")
+        or payload.get("email")
+        or payload.get("user")
+    )
+    profit = payload.get("profit") if "profit" in payload else payload.get("amount")
 
     if not user_identifier or profit is None:
         raise HTTPException(
             status_code=400,
-            detail="Les champs 'user_identifier' et 'profit' sont obligatoires.",
+            detail="Les champs 'user_identifier' (ou 'email') et 'profit'/'amount' sont obligatoires.",
         )
 
     try:
@@ -739,7 +780,7 @@ def admin_add_profit(
         user.profit_total = 0.0
     user.profit_total += profit
 
-    # (optionnel) On peut aussi créditer le solde avec ce profit
+    # Créditer aussi le solde avec ce profit
     if user.balance is None:
         user.balance = 0.0
     user.balance += profit
@@ -756,6 +797,7 @@ def admin_add_profit(
         "profit_total": user.profit_total,
     }
 
+
 @api.post("/admin/manual-payments/{payment_id}/approve")
 def admin_approve_payment(
     payment_id: str,
@@ -766,7 +808,7 @@ def admin_approve_payment(
     if not p:
         raise HTTPException(status_code=404, detail="Paiement introuvable")
     if p.status != "PENDING":
-        raise HTTPException(statuscode=400, detail="Déjà traité")
+        raise HTTPException(status_code=400, detail="Déjà traité")
 
     p.status = "APPROVED"
     p.reviewed_by = admin.id
@@ -779,7 +821,7 @@ def admin_approve_payment(
         if ref:
             ref.balance = float(ref.balance or 0.0) + float(p.amount_usd) * 0.5
             db.commit()
-            db.refresh(ref)  # <<< pour que le front voie tout de suite le nouveau solde
+            db.refresh(ref)
             log.info(f"[REF] +{p.amount_usd*0.5}$ ajouté au parrain {ref.email}")
         user.has_first_payment = True
         db.commit()
@@ -807,6 +849,7 @@ def admin_approve_payment(
 
     return {"ok": True, "message": "Paiement approuvé et abonnement activé"}
 
+
 @api.post("/admin/manual-payments/{payment_id}/reject")
 def admin_reject_payment(
     payment_id: str,
@@ -825,6 +868,7 @@ def admin_reject_payment(
     p.reviewed_by = admin.id
     db.commit()
     return {"ok": True, "message": "Paiement rejeté"}
+
 
 @api.get("/admin/withdrawals")
 def admin_list_withdrawals(
@@ -850,7 +894,9 @@ def admin_list_withdrawals(
             "rejection_reason": w.rejection_reason,
             "created_at": w.created_at,
         }
+
     return [to_dict(r) for r in rows]
+
 
 @api.post("/admin/withdrawals/{withdrawal_id}/approve")
 def admin_approve_withdrawal(
@@ -862,7 +908,7 @@ def admin_approve_withdrawal(
     if not w:
         raise HTTPException(status_code=404, detail="Retrait introuvable")
     if w.status != "PENDING":
-        raise HTTPException(statuscode=400, detail="Déjà traité")
+        raise HTTPException(status_code=400, detail="Déjà traité")
 
     user = db.get(User, w.user_id)
     if (user.balance or 0.0) < w.amount:
@@ -872,9 +918,10 @@ def admin_approve_withdrawal(
     w.status = "APPROVED"
     w.reviewed_by = admin.id
     db.commit()
-    db.refresh(user)  # <<< pour refléter le solde à jour
+    db.refresh(user)
 
     return {"ok": True, "message": "Retrait approuvé", "new_user_balance": float(user.balance or 0.0)}
+
 
 @api.post("/admin/withdrawals/{withdrawal_id}/reject")
 def admin_reject_withdrawal(
@@ -909,6 +956,7 @@ def seed(db: Session = Depends(get_db)):
                 name="Starter", name_fr="Débutant", name_es="Inicial",
                 price_usd=300,
                 features=j(["1 cycle per day", "Basic support", "Trading simulator"]),
+
                 features_fr=j(["1 cycle par jour", "Support de base", "Simulateur de trading"]),
                 features_es=j(["1 ciclo por día", "Soporte básico", "Simulador de trading"]),
                 max_cycles_per_day=1,
@@ -952,6 +1000,7 @@ def seed(db: Session = Depends(get_db)):
 # -----------------------------------------------------------------------------#
 app.include_router(api)
 Base.metadata.create_all(bind=engine)
+
 
 @app.get("/health")
 def health():
